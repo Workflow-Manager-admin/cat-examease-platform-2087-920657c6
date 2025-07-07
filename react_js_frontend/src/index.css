@@ -9,9 +9,10 @@
   --color-error: #e06c75;
   --color-info: #2188ff;
   --text-heading: #1c2442;
-  --text-main: #303441;
-  --text-muted: #566278;
+  --text-main: #293451;
+  --text-muted: #879caf;
 }
+
 html {
   box-sizing: border-box;
   font-size: 16px;
@@ -22,8 +23,10 @@ body {
   padding: 0;
   min-height: 100vh;
   font-family: "Segoe UI", "Roboto", Arial, sans-serif;
-  background: var(--color-bg);
+  background: linear-gradient(130deg, #f8f9fa 65%, #b4efec 100%);
   color: var(--text-main);
+  background-attachment: fixed;
+  transition: background 0.21s;
 }
 a {
   color: var(--color-accent);
