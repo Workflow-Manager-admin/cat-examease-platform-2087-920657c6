@@ -16,12 +16,13 @@ SUPABASE_JWT_SECRET=your-jwt-secret
 ## Usage
 
 - The backend requires a Bearer JWT token (from Supabase Auth) for all `/admin/*` routes.
-- The token must belong to a user with `user_metadata.role = "superadmin"`.
+- The token must belong to a user with `user_metadata.role = "superadmin"` or `"admin"` for appropriate endpoints.
 - All data operations (users, results, schedules, etc.) are handled via Supabase tables and auth.
 
 ## Endpoints Overview
 
-- `POST   /admin/user`       — Add new user (admin/candidate). Fields: email, password, name, role
+- `POST   /admin/users`      — Add new user (candidate/admin/superadmin). Fields: email, password, name, role (JWT: admin/superadmin required)
+- `POST   /admin/user`       — Add new user (admin/candidate). (Legacy; prefer /admin/users for fine role assignment)
 - `PUT    /admin/user/:id`   — Update user (email/password/name/role)
 
 - `POST   /admin/result`     — Add exam result

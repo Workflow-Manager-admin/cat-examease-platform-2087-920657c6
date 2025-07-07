@@ -25,6 +25,151 @@ const PORT = process.env.PORT || 4242;
 app.use(cors());
 app.use(bodyParser.json());
 
+/**
+ * PUBLIC_INTERFACE
+ * Middleware to validate JWT in Authorization header and require "admin" or "superadmin" role.
+ * Accepts both roles for admin endpoints (superadmin has highest privilege).
+ */
+async function requireAdminOrSuperadmin(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: "No token" });
+
+  try {
+    if (SUPABASE_JWT_SECRET) {
+      const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
+      const role =
+        payload.role ||
+        (payload.user_metadata && payload.user_metadata.role) ||
+        (payload.app_metadata && payload.app_metadata.role);
+      if (role === "admin" || role === "superadmin") {
+        req.user = payload;
+        return next();
+      }
+      return res.status(403).json({ error: "Admin privilege required" });
+    } else {
+      // Fallback: Validate via Supabase Auth API
+      const { data, error } = await supabase.auth.getUser(token);
+      if (error || !data || !data.user) return res.status(401).json({ error: "Invalid token" });
+      const supaUser = data.user;
+      const role =
+        supaUser.role ||
+        (supaUser.user_metadata && supaUser.user_metadata.role) ||
+        (supaUser.app_metadata && supaUser.app_metadata.role);
+      if (role === "admin" || role === "superadmin") {
+        req.user = supaUser;
+        return next();
+      }
+      return res.status(403).json({ error: "Admin privilege required" });
+    }
+  } catch (e) {
+    return res.status(401).json({ error: "Token invalid/expired: " + e.message });
+  }
+}
+
+/**
+ * PUBLIC_INTERFACE
+ * POST /admin/users
+ * Add new user as admin/superadmin, with validation, error handling, and Supabase Auth/users table integration.
+ * 
+ * Body: { "email": string, "password": string, "name": string, "role": "candidate"|"admin"|"superadmin", ... }
+ * Role must be one of: candidate, admin, superadmin
+ * 
+ * Requires: Bearer JWT for admin or superadmin.
+ * 
+ * Returns:
+ *  - 201 Created: { user: {id, email, role, ...}, details }
+ *  - 400 Bad Request: Validation error
+ *  - 409 Conflict: Email/user already exists
+ *  - 401/403: Authentication/privilege errors
+ * 
+ * OpenAPI doc: 
+ *   @openapi
+ *   path: /admin/users
+ *   method: post
+ *   summary: Create a new user (admin/superadmin only)
+ *   description: Adds a new user to the system. Only accessible to authenticated admins/superadmins.
+ *   requestBody:
+ *     required: true
+ *     content:
+ *       application/json:
+ *         schema:
+ *           type: object
+ *           required: [email, password, name, role]
+ *           properties:
+ *             email: { type: string, format: email, description: User email }
+ *             password: { type: string, minLength: 6, description: User password }
+ *             name: { type: string, description: User full name }
+ *             role: { type: string, enum: [candidate, admin, superadmin], description: User role }
+ *   responses:
+ *     201: { description: User created }
+ *     400: { description: Validation error }
+ *     409: { description: User already exists }
+ *     401: { description: Unauthorized }
+ *     403: { description: Admin privilege required }
+ *   security:
+ *     - bearerAuth: []
+ *   tags: [admin, user management]
+ */
+app.post("/admin/users", requireAdminOrSuperadmin, async (req, res) => {
+  const { email, password, name, role } = req.body || {};
+  // Validate input
+  if (
+    !email || typeof email !== "string" ||
+    !password || typeof password !== "string" || password.length < 6 ||
+    !name || typeof name !== "string" ||
+    !role || !["candidate", "admin", "superadmin"].includes(role)
+  ) {
+    return res.status(400).json({ error: "Missing or invalid input: email, password (min 6 chars), name, role (candidate/admin/superadmin) required." });
+  }
+  try {
+    // 1. Create user in Supabase Auth
+    const { data, error } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      user_metadata: { name, role },
+    });
+    if (error) {
+      if (error.message && error.message.toLowerCase().includes("already registered")) {
+        return res.status(409).json({ error: "User already exists with this email" });
+      }
+      return res.status(400).json({ error: error.message });
+    }
+    const userId = data.user?.id;
+    // 2. Insert into users table, only if not already present
+    if (userId) {
+      // Try to insert user profile into users table if the table/columns exist
+      // (If fails, surface warning but allow success as primary ID is in Auth)
+      let usersInsertResult=null, usersError=null;
+      try {
+        const { data: userRow, error: insErr } = await supabase.from("users").insert(
+          [{ id: userId, email, name, role }]
+        );
+        usersInsertResult=userRow;
+        usersError=insErr;
+      } catch (e) {
+        usersError = { message: e.message };
+      }
+      res.status(201).json({
+        user: {
+          id: userId,
+          email,
+          name,
+          role,
+        },
+        details: {
+          supabase_auth: data.user,
+          users_table: usersError ? { error: usersError.message } : usersInsertResult,
+        }
+      });
+    } else {
+      return res.status(500).json({ error: "User creation failed in Auth. No user id returned." });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Internal error" });
+  }
+});
+
 app.get("/", (req, res) => {
   res.json({ api: "CAT ExamEase Admin Backend", status: "OK" });
 });
